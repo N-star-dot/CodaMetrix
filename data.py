@@ -32,8 +32,10 @@ MEDICAL_TEXT_MAP = {
 }
 
 # --- MTSamples specialty -> category (unmapped specialties -> "Other") ---
+# NOTE: "Cardiovascular / Pulmonary" is intentionally NOT mapped to Cardiology — it's a
+# combined bucket that mixes lung cases in, so it falls through to "Other". Clean cardiac
+# signal comes from the medtext label-4 abstracts instead.
 SPECIALTY_MAP = {
-    "Cardiovascular / Pulmonary": "Cardiology",   # NOTE: lumps LUNG cases into Cardiology
     "Neurology": "Neurology",
     "Neurosurgery": "Neurology",
     "Orthopedic": "Orthopedics",
@@ -78,6 +80,21 @@ def clean_text(t):
     t = unicodedata.normalize("NFKC", t)
     t = "".join(ch for ch in t if ch in "\n\t" or ord(ch) >= 32)
     return re.sub(r"\s+", " ", t).strip()
+
+
+def truncate_note(text, max_sentences=3, max_chars=500):
+    """Shrink a note to the FINAL-TEST vignette domain.
+
+    Training notes run ~1k-3.5k chars (Orthopedic op-notes hit 12k); the final-test
+    cases are ~300-char vignettes. That length gap let the model use length as a class
+    proxy (long=>Orthopedics, short=>Neurology). Keeping only the first ~3 sentences
+    (hard cap ~500 chars, no mid-word cut) puts training in the same shape as the test.
+    """
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    out = " ".join(parts[:max_sentences]).strip()
+    if len(out) > max_chars:
+        out = out[:max_chars].rsplit(" ", 1)[0].strip()
+    return out
 
 
 def _dedup_key(t):

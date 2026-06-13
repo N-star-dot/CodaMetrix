@@ -16,8 +16,10 @@ print(f"Source 2: {path_2}")
 # Step 1: Load & standardize Source 1 (medical-text, tab-separated .dat)
 # =============================================================================
 # Label mapping: numeric code -> condition name -> target class
-numeric_to_condition = {1: "Cardiovascular diseases", 2: "Digestive system diseases",
-                        3: "Nervous system diseases", 4: "Neoplasms",
+# NOTE: codes verified against the note text — 1 is cancer, 4 is cardiac
+# (label-1 note = "cancer patients..."; label-4 note = "myocardial infarction...").
+numeric_to_condition = {1: "Neoplasms", 2: "Digestive system diseases",
+                        3: "Nervous system diseases", 4: "Cardiovascular diseases",
                         5: "General pathological conditions"}
 label_map_1 = {
     "Cardiovascular diseases": "Cardiology",
@@ -51,12 +53,15 @@ df2 = df2[["clinical_text", "target_label"]]
 # =============================================================================
 df = pd.concat([df1, df2], ignore_index=True)
 
-def clean_text(text):
-    text = str(text).lower()
-    return re.sub(r"[^a-z0-9\s]", "", text).strip()
+# Same cleaning as data.py / parse_cases.py: keeps case + punctuation (no lowercasing,
+# no punctuation stripping) so clinical acronyms survive — then expand them. Baking the
+# expansion into the CSV means his training path always gets it, and it matches the
+# test-file preprocessing (predict.py expands the cases too).
+from data import clean_text, expand_acronyms
 
-df["clinical_text"] = df["clinical_text"].apply(clean_text)
-df = df[df["clinical_text"].str.len() > 0].reset_index(drop=True)
+df["clinical_text"] = df["clinical_text"].apply(lambda t: expand_acronyms(clean_text(t)))
+df = df.drop_duplicates(subset="clinical_text")                      # no dup -> no CV leakage
+df = df[df["clinical_text"].str.len() >= 40].reset_index(drop=True)  # match data.py min_chars
 
 print(f"\nCombined dataset shape: {df.shape}")
 print(df["target_label"].value_counts())

@@ -85,7 +85,7 @@ def build_clinical_tfidf(train_texts, val_texts, test_texts=None):
         ngram_range=(1, 3),        # Catch unigrams, bigrams, and trigrams
         sublinear_tf=True,         # Logarithmic scaling: TF -> 1 + log(TF)
         max_features=3000,         # STRICT CAP: Prevents the feature space from exploding
-        min_df=3,                  # Ignore words/phrases that appear in fewer than 3 notes
+        min_df=2,                  # appear in >=2 notes (was 3; short test vignettes light up few features)
         max_df=0.60,               # Strip words in >60% of notes (boilerplate like "patient", "history")
         stop_words='english'       # Strip generic English filler words
     )
@@ -119,7 +119,7 @@ def optimize_threshold_weights(oof_probabilities, true_labels, n_classes=5):
 # Feature Alignment, Leakage-Free CV, and Soft-Voting Ensemble Blend
 # =============================================================================
 
-def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=None, n_classes=5, class_names=None):
+def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=None, n_classes=5, class_names=None, other_prior=1.0):
     """
     Complete Phase 3 Orchestrator.
     
@@ -181,7 +181,7 @@ def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=
         
         # ----- Initialize Regularized Models -----
         # Custom weights: double penalty for "Other" (index 4) which overlaps with all specialties
-        custom_weights = {0: 1.0, 1: 1.0, 2: 1.2, 3: 1.2, 4: 2.0}
+        custom_weights = {0: 1.0, 1: 1.0, 2: 1.2, 3: 1.2, 4: 1.8}  # Other 1.8: 1.3 starved it (26/1000); 2.0 leaked cardiac (pre-truncation). Truncation decoupled cardiac, so 1.8 is safe.
         model_lr = LogisticRegression(
             C=0.05, max_iter=1000, class_weight=custom_weights, random_state=42
         )
@@ -256,8 +256,24 @@ def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=
     # Average test probabilities across all 5 folds for final submission
     if test_preds_accumulated:
         final_test_probabilities = np.mean(test_preds_accumulated, axis=0)
-        return oof_predictions, np.argmax(final_test_probabilities * threshold_weights, axis=1)
-        
+        # Persist raw test probs + calibrated weights so the test-time Other prior can be
+        # swept OFFLINE (no BERT re-extraction). Columns match class_names order.
+        if class_names is not None:
+            import pandas as pd
+            tp = pd.DataFrame(final_test_probabilities, columns=[f"prob_{c}" for c in class_names])
+            tp.to_csv("test_probabilities.csv", index=False)
+            with open("threshold_weights.txt", "w") as fh:
+                fh.write(",".join(map(str, threshold_weights)))
+            print("saved test probabilities -> test_probabilities.csv")
+        # Test-time "Other" prior: OOF-fitted threshold weights are tuned on the BALANCED
+        # training folds, so they suppress Other. The final test set is Other-heavy (derm,
+        # endo, rheum, nephro, pulm, ophtho, gyn, psych), so multiply Other's weight here.
+        # 2.0 is the knee: max Other recovery before cardiac cases start eroding (swept on
+        # ChatGPT sentinel cases against test_probabilities.csv).
+        final_weights = threshold_weights.copy()
+        final_weights[class_names.index("Other") if class_names else n_classes - 1] *= other_prior
+        return oof_predictions, np.argmax(final_test_probabilities * final_weights, axis=1)
+
     return oof_predictions, None
 
 
