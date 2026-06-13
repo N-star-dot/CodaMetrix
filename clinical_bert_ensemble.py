@@ -43,7 +43,7 @@ def extract_clinical_bert_embeddings(texts, batch_size=32):
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i+batch_size]
             inputs = tokenizer(batch_texts, padding=True, truncation=True,
-                               max_length=512, return_tensors="pt").to(device)
+                               max_length=256, return_tensors="pt").to(device)
 
             outputs = model(**inputs)
 
@@ -180,10 +180,13 @@ def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=
         X_val_combined = hstack([X_val_tfidf, X_val_bert]).tocsr()
         
         # ----- Initialize Regularized Models -----
-        # Custom weights: double penalty for "Other" (index 4) which overlaps with all specialties
-        custom_weights = {0: 1.0, 1: 1.0, 2: 1.2, 3: 1.2, 4: 2.0}
+        # Build weights keyed on encoded label integers — safe regardless of LE order
+        from sklearn.preprocessing import LabelEncoder as _LE
+        _le = _LE(); _le.fit(np.unique(labels))
+        _weight_map = {"Other": 2.0, "Neurology": 1.2, "Orthopedics": 1.2}
+        _cw = {int(i): _weight_map.get(c, 1.0) for i, c in enumerate(_le.classes_)}
         model_lr = LogisticRegression(
-            C=0.05, max_iter=1000, class_weight=custom_weights, random_state=42
+            C=0.05, max_iter=1000, class_weight=_cw, random_state=42
         )
         model_xgb = xgb.XGBClassifier(
             max_depth=3, learning_rate=0.03, n_estimators=400,

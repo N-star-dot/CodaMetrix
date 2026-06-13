@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-train_eval.py  -  5-fold stratified CV with 6-class internal training.
-
-Trains on 6 classes (Other split into Other_Cancer / Other_General) so the
-model learns distinct embeddings for each "Other" subtype, then collapses
-predictions back to the 5 competition categories for scoring.
+train_eval.py  -  5-fold stratified CV with ClinicalBERT + TF-IDF ensemble.
 
 USAGE
     python train_eval.py                          # uses unleash_train_1k.csv
-    python train_eval.py --expand                 # + acronym expansion
+    python train_eval.py --expand                 # + clinical acronym expansion
     python train_eval.py --medtext ... --mtsamples ...  # 14k dataset
 """
 
@@ -21,15 +17,6 @@ from sklearn.preprocessing import LabelEncoder
 from data import load_data, CATEGORIES
 
 SEED, N_SPLITS = 42, 5
-# 6 internal training classes — Other split for better discrimination
-INTERNAL_CATEGORIES = sorted(["Cardiology", "Gastroenterology", "Neurology",
-                               "Orthopedics", "Other_Cancer", "Other_General"])
-
-
-def collapse_other(arr):
-    """Other_Cancer / Other_General -> Other for competition scoring."""
-    return np.array(["Other" if l in ("Other_Cancer", "Other_General") else l
-                     for l in arr])
 
 
 def _extract_bert_subprocess(texts, project_dir):
@@ -67,16 +54,21 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
     from sklearn.linear_model import LogisticRegression
     import xgboost as xgb
 
-    # Encode on fixed 6-class set — no fold variance
+    # Fix encoding to CATEGORIES order — consistent across all folds
     le = LabelEncoder()
-    le.fit(INTERNAL_CATEGORIES)
+    le.fit(CATEGORIES)
     labels = le.transform(labels_str)
-    n_classes = len(INTERNAL_CATEGORIES)
+    n_classes = len(CATEGORIES)
+
+    # Build class weights keyed on encoded integers, boosting Other
+    cw = {int(np.where(le.classes_ == c)[0]): w
+          for c, w in [("Cardiology", 1.0), ("Gastroenterology", 1.0),
+                       ("Neurology", 1.2), ("Orthopedics", 1.2), ("Other", 2.0)]}
 
     texts_arr = np.array(texts, dtype=object)
     n = len(texts_arr)
-    oof_pred_str = np.empty(n, dtype=object)
-    oof_prob_6   = np.zeros((n, n_classes))
+    oof_pred = np.empty(n, dtype=int)
+    oof_prob = np.zeros((n, n_classes))
 
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
     fold_scores = []
@@ -91,13 +83,6 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
         X_train = hstack([X_train_tfidf, csr_matrix(bert_embeddings[tr])]).tocsr()
         X_val   = hstack([X_val_tfidf,   csr_matrix(bert_embeddings[va])]).tocsr()
 
-        # Boost Other subtypes 2× and Neurology/Ortho 1.2× to fix minority recall
-        cw = {i: 1.0 for i in range(n_classes)}
-        for cls, w in [("Other_Cancer", 2.0), ("Other_General", 2.0),
-                       ("Neurology", 1.2), ("Orthopedics", 1.2)]:
-            if cls in le.classes_:
-                cw[int(np.where(le.classes_ == cls)[0][0])] = w
-
         lr = LogisticRegression(C=0.1, max_iter=1000,
                                 class_weight=cw, random_state=42)
         xgb_m = xgb.XGBClassifier(
@@ -108,9 +93,10 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
         lr.fit(X_train, y_train)
         xgb_m.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
-        # Align proba columns to INTERNAL_CATEGORIES order
         prob_lr  = lr.predict_proba(X_val)
         prob_xgb = xgb_m.predict_proba(X_val)
+
+        # Align proba columns to CATEGORIES order via classes_ — handles missing classes in fold
         full_lr  = np.zeros((len(va), n_classes))
         full_xgb = np.zeros((len(va), n_classes))
         for ci, idx in enumerate(lr.classes_):
@@ -118,47 +104,33 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
         for ci, idx in enumerate(xgb_m.classes_):
             full_xgb[:, idx] = prob_xgb[:, ci]
 
-        # Dynamic blend — score on collapsed 5-class labels
         best_f1, best_w = 0, 0.5
-        y_val_collapsed = collapse_other(le.inverse_transform(y_val))
         for w in np.linspace(0.1, 0.9, 9):
-            preds = collapse_other(
-                le.inverse_transform(np.argmax(w * full_lr + (1-w) * full_xgb, axis=1))
-            )
-            score = f1_score(y_val_collapsed, preds, average="macro", labels=CATEGORIES)
+            preds = np.argmax(w * full_lr + (1-w) * full_xgb, axis=1)
+            score = f1_score(y_val, preds, average="macro")
             if score > best_f1:
                 best_f1, best_w = score, w
         print(f"  Best blend weight (LR): {best_w:.2f}")
 
         blended = best_w * full_lr + (1 - best_w) * full_xgb
-        oof_prob_6[va]   = blended
-        oof_pred_str[va] = le.inverse_transform(np.argmax(blended, axis=1))
+        oof_prob[va] = blended
+        oof_pred[va] = np.argmax(blended, axis=1)
 
-        s = f1_score(y_val_collapsed,
-                     collapse_other(oof_pred_str[va]),
-                     average="macro", labels=CATEGORIES)
+        s = f1_score(y_val, oof_pred[va], average="macro")
         fold_scores.append(s)
         print(f"  fold {fold}: macro-F1 = {s:.4f}  (val n={len(va)})")
 
-    oof_collapsed  = collapse_other(oof_pred_str)
-    true_collapsed = collapse_other(labels_str)
-
-    overall = f1_score(true_collapsed, oof_collapsed, average="macro", labels=CATEGORIES)
+    overall = f1_score(labels, oof_pred, average="macro")
     print(f"\nfold mean macro-F1 : {np.mean(fold_scores):.4f}  (+/- {np.std(fold_scores):.4f})")
     print(f"OOF   macro-F1     : {overall:.4f}\n")
-    print(classification_report(true_collapsed, oof_collapsed,
-                                labels=CATEGORIES, target_names=CATEGORIES, digits=3))
+    print(classification_report(labels, oof_pred,
+                                labels=list(range(n_classes)),
+                                target_names=le.classes_, digits=3))
 
-    # Sum Other_Cancer + Other_General proba columns into one Other column
-    other_idx = [int(np.where(le.classes_ == c)[0][0])
-                 for c in ("Other_Cancer", "Other_General") if c in le.classes_]
-    out = pd.DataFrame({"id": np.arange(n), "true": true_collapsed, "pred": oof_collapsed})
-    for c in CATEGORIES:
-        if c == "Other":
-            out["prob_Other"] = oof_prob_6[:, other_idx].sum(axis=1)
-        else:
-            idx = np.where(le.classes_ == c)[0]
-            out[f"prob_{c}"] = oof_prob_6[:, idx[0]] if len(idx) else 0.0
+    out = pd.DataFrame({"id": np.arange(n), "true": labels_str,
+                        "pred": le.inverse_transform(oof_pred)})
+    for j, c in enumerate(le.classes_):
+        out[f"prob_{c}"] = oof_prob[:, j]
     out.to_csv("oof_predictions.csv", index=False)
     print("saved OOF table -> oof_predictions.csv")
     return overall
@@ -183,28 +155,15 @@ def main():
             from data import expand_acronyms
             texts = [expand_acronyms(t) for t in texts]
 
-    # Map Other -> Other_Cancer / Other_General using source column if present,
-    # otherwise split evenly by index (no source info in the 1k CSV).
-    # For the 1k CSV both subtypes collapsed to "Other" — re-split 50/50 by row parity.
-    labels_internal = []
-    other_toggle = 0
-    for lbl in labels_str:
-        if lbl == "Other":
-            labels_internal.append("Other_Cancer" if other_toggle % 2 == 0 else "Other_General")
-            other_toggle += 1
-        else:
-            labels_internal.append(lbl)
-    labels_internal = np.array(labels_internal)
-
     print(f"loaded {len(texts)} notes")
-    print("category counts:", dict(sorted(collections.Counter(labels_internal.tolist()).items())), "\n")
+    print("category counts:", dict(sorted(collections.Counter(labels_str.tolist()).items())), "\n")
 
     project_dir = os.path.dirname(os.path.abspath(__file__))
     print("Extracting ClinicalBERT embeddings (MPS subprocess)...")
     bert_emb = _extract_bert_subprocess(list(texts), project_dir)
     print(f"Embeddings shape: {bert_emb.shape}\n")
 
-    run_cv(texts, labels_internal, bert_emb)
+    run_cv(texts, labels_str, bert_emb)
 
 
 if __name__ == "__main__":
