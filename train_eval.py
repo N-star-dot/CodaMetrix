@@ -145,14 +145,26 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--medtext", help="path to the 14k medical-text train.dat")
-    ap.add_argument("--mtsamples", help="path to mtsamples.csv")
+    ap.add_argument("--csv", default="unleash_train_1k.csv",
+                    help="path to balanced training CSV (default: unleash_train_1k.csv)")
+    ap.add_argument("--medtext", help="path to 14k medical-text train.dat (overrides --csv)")
+    ap.add_argument("--mtsamples", help="path to mtsamples.csv (overrides --csv)")
     ap.add_argument("--expand", action="store_true", help="apply clinical acronym expansion")
     a = ap.parse_args()
 
-    texts, labels_str = load_data(medtext=a.medtext, mtsamples=a.mtsamples,
-                                  expand=a.expand, dedup=True)
-    print(f"loaded {len(texts)} notes (dedup on, expand={a.expand})")
+    if a.medtext or a.mtsamples:
+        texts, labels_str = load_data(medtext=a.medtext, mtsamples=a.mtsamples,
+                                      expand=a.expand, dedup=True)
+    else:
+        import pandas as pd
+        df = pd.read_csv(a.csv)
+        texts = df["clinical_text"].tolist()
+        labels_str = df["target_label"].values
+        if a.expand:
+            from data import expand_acronyms, clean_text
+            texts = [expand_acronyms(t) for t in texts]
+
+    print(f"loaded {len(texts)} notes")
     print("category counts:", dict(sorted(collections.Counter(labels_str.tolist()).items())), "\n")
 
     project_dir = os.path.dirname(os.path.abspath(__file__))
