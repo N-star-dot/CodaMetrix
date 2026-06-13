@@ -43,7 +43,7 @@ def extract_clinical_bert_embeddings(texts, batch_size=32):
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i+batch_size]
             inputs = tokenizer(batch_texts, padding=True, truncation=True,
-                               max_length=256, return_tensors="pt").to(device)
+                               max_length=512, return_tensors="pt").to(device)
 
             outputs = model(**inputs)
 
@@ -86,7 +86,7 @@ def build_clinical_tfidf(train_texts, val_texts, test_texts=None):
         sublinear_tf=True,         # Logarithmic scaling: TF -> 1 + log(TF)
         max_features=3000,         # STRICT CAP: Prevents the feature space from exploding
         min_df=3,                  # Ignore words/phrases that appear in fewer than 3 notes
-        max_df=0.85,               # Ignore boilerplate text that appears in >85% of notes
+        max_df=0.60,               # Strip words in >60% of notes (boilerplate like "patient", "history")
         stop_words='english'       # Strip generic English filler words
     )
     
@@ -180,8 +180,10 @@ def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=
         X_val_combined = hstack([X_val_tfidf, X_val_bert]).tocsr()
         
         # ----- Initialize Regularized Models -----
+        # Custom weights: double penalty for "Other" (index 4) which overlaps with all specialties
+        custom_weights = {0: 1.0, 1: 1.0, 2: 1.2, 3: 1.2, 4: 2.0}
         model_lr = LogisticRegression(
-            C=0.05, max_iter=1000, class_weight='balanced', random_state=42
+            C=0.05, max_iter=1000, class_weight=custom_weights, random_state=42
         )
         model_xgb = xgb.XGBClassifier(
             max_depth=3, learning_rate=0.03, n_estimators=400,

@@ -90,8 +90,9 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
         X_train = hstack([X_train_tfidf, csr_matrix(bert_embeddings[tr])]).tocsr()
         X_val   = hstack([X_val_tfidf,   csr_matrix(bert_embeddings[va])]).tocsr()
 
+        custom_weights = {0: 1.0, 1: 1.0, 2: 1.2, 3: 1.2, 4: 2.0}
         lr = LogisticRegression(C=0.1, max_iter=1000,
-                                class_weight="balanced", random_state=42)
+                                class_weight=custom_weights, random_state=42)
         xgb_m = xgb.XGBClassifier(
             max_depth=3, learning_rate=0.03, n_estimators=400,
             subsample=0.75, colsample_bytree=0.7, colsample_bylevel=0.7,
