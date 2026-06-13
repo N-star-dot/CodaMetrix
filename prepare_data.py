@@ -23,8 +23,8 @@ label_map_1 = {
     "Cardiovascular diseases": "Cardiology",
     "Nervous system diseases": "Neurology",
     "Digestive system diseases": "Gastroenterology",
-    "Neoplasms": "Other",
-    "General pathological conditions": "Other",
+    "Neoplasms": "Other_Cancer",           # Keep separate internally
+    "General pathological conditions": "Other_General",  # Keep separate internally
 }
 
 df1 = pd.read_csv(os.path.join(path_1, "train.dat"), sep="\t", header=None,
