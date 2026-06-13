@@ -9,21 +9,15 @@ import json
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-import kagglehub
-from data import load_data
 
 # =============================================================================
 # Load & encode
 # =============================================================================
-print("Downloading datasets via kagglehub...")
-path_1 = kagglehub.dataset_download("chaitanyakck/medical-text")
-path_2 = kagglehub.dataset_download("tboyle10/medicaltranscriptions")
-
-medtext_path = os.path.join(path_1, "train.dat")
-mtsamples_path = os.path.join(path_2, "mtsamples.csv")
-
-print("Loading and preparing data...")
-texts, labels_raw = load_data(medtext=medtext_path, mtsamples=mtsamples_path, expand=True)
+print("Loading data from unleash_train_1k.csv...")
+import pandas as pd
+df = pd.read_csv("unleash_train_1k.csv")
+texts = df["clinical_text"].tolist()
+labels_raw = df["target_label"].values
 
 le = LabelEncoder()
 labels = le.fit_transform(labels_raw)

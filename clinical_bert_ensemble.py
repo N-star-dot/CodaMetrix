@@ -181,7 +181,7 @@ def run_pipeline(raw_texts, bert_embeddings, labels, test_texts=None, test_bert=
         
         # ----- Initialize Regularized Models -----
         model_lr = LogisticRegression(
-            C=0.1, max_iter=1000, class_weight='balanced', random_state=42
+            C=0.05, max_iter=1000, class_weight='balanced', random_state=42
         )
         model_xgb = xgb.XGBClassifier(
             max_depth=3, learning_rate=0.03, n_estimators=400,
