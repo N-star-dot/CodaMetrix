@@ -60,10 +60,9 @@ def run_cv(texts, labels_str, bert_embeddings, n_splits=N_SPLITS):
     labels = le.transform(labels_str)
     n_classes = len(CATEGORIES)
 
-    # Build class weights keyed on encoded integers, boosting Other
-    cw = {int(np.where(le.classes_ == c)[0]): w
-          for c, w in [("Cardiology", 1.0), ("Gastroenterology", 1.0),
-                       ("Neurology", 1.2), ("Orthopedics", 1.2), ("Other", 2.0)]}
+    # Build class weights — boost Other 2× and Neurology/Orthopedics 1.2×
+    weight_map = {"Other": 2.0, "Neurology": 1.2, "Orthopedics": 1.2}
+    cw = {i: weight_map.get(c, 1.0) for i, c in enumerate(le.classes_)}
 
     texts_arr = np.array(texts, dtype=object)
     n = len(texts_arr)
