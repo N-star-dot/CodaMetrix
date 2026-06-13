@@ -25,7 +25,7 @@ import sys, json, numpy as np
 sys.path.insert(0, sys.argv[3])
 from clinical_bert_ensemble import extract_clinical_bert_embeddings
 texts = json.load(open(sys.argv[1]))
-emb = extract_clinical_bert_embeddings(texts, batch_size=64)
+emb = extract_clinical_bert_embeddings(texts, batch_size=32)
 np.save(sys.argv[2], emb)
 print(f"Extracted {emb.shape}")
 """

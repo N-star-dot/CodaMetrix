@@ -47,7 +47,7 @@ def extract_clinical_bert_embeddings(texts, batch_size=32):
                   end="\r", flush=True)
             batch_texts = texts[i:i+batch_size]
             inputs = tokenizer(batch_texts, padding=True, truncation=True,
-                               max_length=512, return_tensors="pt").to(device)
+                               max_length=256, return_tensors="pt").to(device)
 
             outputs = model(**inputs)
 
