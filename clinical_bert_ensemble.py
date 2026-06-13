@@ -39,8 +39,12 @@ def extract_clinical_bert_embeddings(texts, batch_size=32):
 
     all_embeddings = []
 
+    total_batches = (len(texts) + batch_size - 1) // batch_size
     with torch.no_grad():
         for i in range(0, len(texts), batch_size):
+            batch_num = i // batch_size + 1
+            print(f"  Batch {batch_num}/{total_batches} ({i+1}-{min(i+batch_size, len(texts))} of {len(texts)})",
+                  end="\r", flush=True)
             batch_texts = texts[i:i+batch_size]
             inputs = tokenizer(batch_texts, padding=True, truncation=True,
                                max_length=512, return_tensors="pt").to(device)
@@ -58,6 +62,7 @@ def extract_clinical_bert_embeddings(texts, batch_size=32):
 
             all_embeddings.append(mean_pooled)
 
+    print()  # newline after progress bar
     result = np.vstack(all_embeddings)
 
     # Free MPS/GPU memory before returning — prevents segfault when
